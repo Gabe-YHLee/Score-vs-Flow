@@ -5,7 +5,6 @@ class ScoreBasedModels(torch.nn.Module):
     def __init__(
         self, 
         score_model: torch.nn.Module,
-        x_dim: int,
         beta_max: float = 1.0,
         ):
         super(ScoreBasedModels, self).__init__()
@@ -16,7 +15,6 @@ class ScoreBasedModels(torch.nn.Module):
         # grad_x logP_t(x|x_0) = -(x-x_0e^{-1/4 beta_max t^2})/(1 - e^{-1/2 beta_max t^2})
         
         self.score_model = score_model
-        self.x_dim = x_dim
         self.beta_max = beta_max
     
     def beta(self, t):
