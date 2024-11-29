@@ -68,3 +68,68 @@ class ScoreBasedModels(torch.nn.Module):
                 xt += (0.5*beta_t*xt + 0.5 * beta_t*score_t)*dt
             xtraj.append(copy.deepcopy(xt.detach()).unsqueeze(1))
         return xt, torch.cat(xtraj, dim=1)
+    
+class ScoreBasedModelsV2(torch.nn.Module):
+    def __init__(
+        self, 
+        score_model: torch.nn.Module,
+        mode: dict = {
+            "type": "ve",
+            "sigma_min": 0.01,
+            "sigma_max": 1.0,
+            "schedule": "linear",
+            },
+        ):
+        super(ScoreBasedModelsV2, self).__init__()
+        # VE, VP, and sub-VP
+        # various noise schedule implemented
+        self.score_model = score_model
+        self.mode = mode
+    
+    def linear_schedule(self, t, a_min, a_max):
+        return a_min + t * (a_max - a_min)
+    
+    def sigmoid_schedule(self, t, a_min, a_max, T=10):
+        return a_min + (a_max - a_min) * torch.sigmoid((t - 0.5)/T)
+    
+    def cosine_schedule(self, t, a_min, a_max):
+        return a_max - 0.5 * (a_max - a_min) * (1 + torch.cos(
+            t * 3.141592653589793))
+    
+    def quadratic_schedule(self, t, a_min, a_max):
+        return a_min + (a_max - a_min) * (t**2)
+    
+    def sample_from_p_tx_x0(self, t, x0):
+        if self.mode["type"] == "ve":
+            mu_t = x0
+            sigma_1 = self.mode["sigma_max"]
+            sigma_0 = self.mode["sigma_min"]
+            if self.mode["schedule"] == "linear":
+                sigma_t = self.linear_schedule(t, sigma_0, sigma_1)
+            elif self.mode["schedule"] == "sigmoid":
+                T = self.mode["T"]
+                sigma_t = self.sigmoid_schedule(t, sigma_0, sigma_1, T=T)
+            elif self.mode["schedule"] == "cosine":
+                sigma_t = self.cosine_schedule(t, sigma_0, sigma_1)
+            elif self.mode["schedule"] == "quadratic":
+                sigma_t = self.quadratic_schedule(t, sigma_0, sigma_1)
+            std_t = torch.sqrt((sigma_t**2 - sigma_0**2).clamp(min=0, max=1e10))
+        elif self.mode["type"] == "vp":
+            # let b(t) = int_0^t beta(s) ds
+            b_max = self.mode["b_max"]
+            if self.mode["schedule"] == "linear":
+                b = self.linear_schedule(t, 0, b_max)
+            elif self.mode["schedule"] == "sigmoid":
+                T = self.mode["T"]
+                b = self.sigmoid_schedule(t, 0, b_max, T=T)
+            elif self.mode["schedule"] == "cosine":
+                b = self.cosine_schedule(t, 0, b_max)
+            elif self.mode["schedule"] == "quadratic":
+                b = self.quadratic_schedule(t, 0, b_max)
+            mu_t = x0 * torch.exp(-0.5 * b)
+            std_t = torch.sqrt((1 - torch.exp(-b)).clamp(min=0, max=1e10))
+        return torch.randn_like(x0) * std_t + mu_t
+    
+    def corruption_process(self, x0, t):
+        xt = self.sample_from_p_tx_x0(t, x0)
+        return xt
